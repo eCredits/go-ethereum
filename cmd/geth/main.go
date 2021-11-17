@@ -130,6 +130,7 @@ var (
 		utils.MinerGasLimitFlag,
 		utils.MinerGasPriceFlag,
 		utils.MinerEtherbaseFlag,
+		utils.MinerSignerFlag,
 		utils.MinerExtraDataFlag,
 		utils.MinerRecommitIntervalFlag,
 		utils.MinerNoVerifyFlag,
@@ -289,6 +290,11 @@ func prepare(ctx *cli.Context) {
 
 	case ctx.IsSet(utils.KilnFlag.Name):
 		log.Info("Starting Geth on Kiln testnet...")
+	case ctx.IsSet(utils.ECSFlag.Name):
+		log.Info("Starting Geth on ECS mainnet...")
+
+	case ctx.IsSet(utils.ECSTestnetFlag.Name):
+		log.Info("Starting Geth on ECS testnet...")
 
 	case ctx.IsSet(utils.DeveloperFlag.Name):
 		log.Info("Starting Geth in ephemeral dev mode...")
@@ -309,7 +315,7 @@ func prepare(ctx *cli.Context) {
 `)
 
 	case !ctx.IsSet(utils.NetworkIdFlag.Name):
-		log.Info("Starting Geth on Ethereum mainnet...")
+		log.Info("Starting Geth on ECS mainnet...")
 	}
 	// If we're a full node on mainnet without --cache specified, bump default cache allowance
 	if ctx.String(utils.SyncModeFlag.Name) != "light" && !ctx.IsSet(utils.CacheFlag.Name) && !ctx.IsSet(utils.NetworkIdFlag.Name) {

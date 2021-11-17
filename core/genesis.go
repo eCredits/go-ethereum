@@ -269,7 +269,7 @@ func SetupGenesisBlockWithOverride(db ethdb.Database, genesis *Genesis, override
 	if (stored == common.Hash{}) {
 		if genesis == nil {
 			log.Info("Writing default main-net genesis block")
-			genesis = DefaultGenesisBlock()
+			genesis = DefaultECSGenesisBlock()
 		} else {
 			log.Info("Writing custom genesis block")
 		}
@@ -285,7 +285,7 @@ func SetupGenesisBlockWithOverride(db ethdb.Database, genesis *Genesis, override
 	header := rawdb.ReadHeader(db, stored, 0)
 	if _, err := state.New(header.Root, state.NewDatabaseWithConfig(db, nil), nil); err != nil {
 		if genesis == nil {
-			genesis = DefaultGenesisBlock()
+			genesis = DefaultECSGenesisBlock()
 		}
 		// Ensure the stored genesis matches with the given one.
 		hash := genesis.ToBlock().Hash()
@@ -323,7 +323,7 @@ func SetupGenesisBlockWithOverride(db ethdb.Database, genesis *Genesis, override
 	// chain config as that would be AllProtocolChanges (applying any new fork
 	// on top of an existing private network genesis block). In that case, only
 	// apply the overrides.
-	if genesis == nil && stored != params.MainnetGenesisHash {
+	if genesis == nil && stored != params.ECSGenesisHash {
 		newcfg = storedcfg
 		applyOverrides(newcfg)
 	}
@@ -357,6 +357,8 @@ func (g *Genesis) configOrDefault(ghash common.Hash) *params.ChainConfig {
 		return params.GoerliChainConfig
 	case ghash == params.KilnGenesisHash:
 		return DefaultKilnGenesisBlock().Config
+	case ghash == params.ECSGenesisHash:
+		return params.ECSChainConfig
 	default:
 		return params.AllEthashProtocolChanges
 	}
@@ -500,6 +502,37 @@ func DefaultSepoliaGenesisBlock() *Genesis {
 		Difficulty: big.NewInt(0x20000),
 		Timestamp:  1633267481,
 		Alloc:      decodePrealloc(sepoliaAllocData),
+	}
+}
+func DefaultECSGenesisBlock() *Genesis {
+	genesisBalance, _ := new(big.Int).SetString("63000000000000000000000000000", 10)
+	return &Genesis{
+		Config:     params.ECSChainConfig,
+		Timestamp:  0x60916FF8,
+		ExtraData:  hexutil.MustDecode("0x000000000000000000000000000000000000000000000000000000000000000060812650e11eB28d5846b1C62F311c0b9F53bc79269a32c2975DC7FE5293c15e0E5BBee066bA4074a38a591a5c1B076a6D05F8C7944D5C86c922e9a60Cd0dB0eEDaA7928f5C5f6EEE2234C88d99B4552050c4bea6019E59dB716d3455d4d271B39E951970000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"),
+		GasLimit:   0x989680,
+		Difficulty: big.NewInt(1),
+		Alloc: GenesisAlloc{
+			common.HexToAddress("7AEB014a130d12E064fCC93C65151C20683E893f"): GenesisAccount{
+				Balance: genesisBalance,
+			},
+		},
+	}
+}
+
+func DefaultECSTestnetGenesisBlock() *Genesis {
+	genesisBalance, _ := new(big.Int).SetString("63000000000000000000000000000", 10)
+	return &Genesis{
+		Config:     params.ECSTestnetChainConfig,
+		Timestamp:  0x60916FF8,
+		ExtraData:  hexutil.MustDecode("0x000000000000000000000000000000000000000000000000000000000000000070AA6F9dd0f55c357Eb159E617944f78b4BCE16a95a15Ecf63d99A77E6Cde13767b24cd45FcF497603C9f21Ace15EB5dD9b889C4715C3E49106943e60000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"),
+		GasLimit:   0x989680,
+		Difficulty: big.NewInt(1),
+		Alloc: GenesisAlloc{
+			common.HexToAddress("70AA6F9dd0f55c357Eb159E617944f78b4BCE16a"): GenesisAccount{
+				Balance: genesisBalance,
+			},
+		},
 	}
 }
 

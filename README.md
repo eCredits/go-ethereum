@@ -1,6 +1,66 @@
-## Go Ethereum
+## e-Credits Go Ethereum
 
-Official Golang implementation of the Ethereum protocol.
+e-Credits modifications of the official Golang implementation of the Ethereum protocol.
+
+## Changes
+
+This fork adds several functions to clique consensus.
+* Enable changing validator set in the genesis block (at epoch boundaries)
+* Add supervalidators which can pass motions in a local supermajory
+* Changing the coinbase address by using the previously unused mix hash
+* 2 new vote types to vote on supervalidator status
+
+How it works:
+
+The genesis config section for clique gained a new field `pallas` where one can specify a mapping from block number (if epoch boundary) to validator set. `pallas` mechanisms only become active at block `clique.config.pallas.activationBlock`. There can be no validator change on the activation block.
+
+Example with 2 validators and a manual override of the validator set at block 10 and 20 (which are epoch boundaries because epoch is set to 10). At block 10 `0xc284Fa2aC5a3495fAEE2e4b07048Ad5E606c4D34` will become the sole validator, regardless of votes.
+```json
+"config": {
+  "chainId": 98052,
+  "homesteadBlock": 0,
+  "eip150Block": 0,
+  "eip150Hash": "0x0000000000000000000000000000000000000000000000000000000000000000",
+  "eip155Block": 0,
+  "eip158Block": 0,
+  "byzantiumBlock": 0,
+  "constantinopleBlock": 0,
+  "petersburgBlock": 0,
+  "istanbulBlock": 0,
+  "clique": {
+    "period": 1,
+    "epoch": 10,
+    "pallas": {
+        "activationBlock": 9,
+        "validators": {
+          "10": [
+            { "address": "0xc284Fa2aC5a3495fAEE2e4b07048Ad5E606c4D34", "super": true }
+          ],
+          "20": [
+            { "address": "0xe18902ac4aa4f857e75bb6007a7a4be49494eacb", "super": true },
+            { "address": "0xc284Fa2aC5a3495fAEE2e4b07048Ad5E606c4D34", "super": true },
+            { "address": "0x8c1ad663ddd304f4d6ebb7ec70eaee6cdb725388" }
+          ]
+        }
+      }
+  }
+```
+
+The regular clique voting mechanism is left in place, however for each vote there is also a supervalidator vote tally. Every supervalidator also has to be a validator for their vote to count. If more than 75% of the supervalidators vote in favour of a motion, it passes independently of the other votes. However a majority of regular validators can still pass a motion even if a majority of supervalidators is against it (the supervalidators can of course revert this with another vote afterwards). Supervalidators cannot be added to or removed from the validator set through the additional supervalidator voting mechanism.
+
+Two new rpc calls have been added:
+* `clique_proposeSuper` and `clique_discardSuper` work the same as the usual propose / discard calls except that they are for supervalidator voting.
+* `clique_getSnapshot` has been amended to include the new voting information.
+
+### Implementation
+
+Clique stores snapshots with the validator set and current vote tallies to disk. The changes here add supervotes and the supervalidator set (also called supersigners in the code) to the snapshot data. Tallies are modified in the `cast` and `uncast` functions which have been modified to affect the supervotes if necessary.
+
+The condition which checks for vote majority has been ammended to allow for supervote-only majorities. Furthermore the validator update logic does not execute if the target is a supervalidator.
+
+At the end of an epoch the node checks the genesis configuration for manual validator overrides. An then manually applies these changes. This is allowed only on epoch boundaries to simplify the logic. All votes are reset at the beginning of an epoch, therefore the initialisation of the next block will clear all now invalid votes and no custom cleanup logic is needed except for reseting the `recents` set which keeps track of the last `len(validators)/2` validators which signed blocks (too prevent single validators from signing too often).
+
+New functions have been added to `pallas.go`, existing functions are modified in place.
 
 [![API Reference](
 https://camo.githubusercontent.com/915b7be44ada53c290eb157634330494ebe3e30a/68747470733a2f2f676f646f632e6f72672f6769746875622e636f6d2f676f6c616e672f6764646f3f7374617475732e737667
@@ -8,9 +68,6 @@ https://camo.githubusercontent.com/915b7be44ada53c290eb157634330494ebe3e30a/6874
 [![Go Report Card](https://goreportcard.com/badge/github.com/ethereum/go-ethereum)](https://goreportcard.com/report/github.com/ethereum/go-ethereum)
 [![Travis](https://travis-ci.com/ethereum/go-ethereum.svg?branch=master)](https://travis-ci.com/ethereum/go-ethereum)
 [![Discord](https://img.shields.io/badge/discord-join%20chat-blue.svg)](https://discord.gg/nthXNEv)
-
-Automated builds are available for stable releases and the unstable master branch. Binary
-archives are published at https://geth.ethereum.org/downloads/.
 
 ## Building the source
 

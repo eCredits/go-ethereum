@@ -87,9 +87,10 @@ type Ethereum struct {
 
 	APIBackend *EthAPIBackend
 
-	miner     *miner.Miner
-	gasPrice  *big.Int
-	etherbase common.Address
+	miner         *miner.Miner
+	gasPrice      *big.Int
+	etherbase     common.Address
+	signerAddress common.Address
 
 	networkID     uint64
 	netRPCService *ethapi.NetAPI
@@ -162,6 +163,7 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 		networkID:         config.NetworkId,
 		gasPrice:          config.Miner.GasPrice,
 		etherbase:         config.Miner.Etherbase,
+		signerAddress:     config.Miner.SignerAddress,
 		bloomRequests:     make(chan chan *bloombits.Retrieval),
 		bloomIndexer:      core.NewBloomIndexer(chainDb, params.BloomBitsBlocks, params.BloomConfirms),
 		p2pServer:         stack.Server(),
@@ -281,7 +283,7 @@ func makeExtraData(extra []byte) []byte {
 	if len(extra) == 0 {
 		// create default extradata
 		extra, _ = rlp.EncodeToBytes([]interface{}{
-			uint(params.VersionMajor<<16 | params.VersionMinor<<8 | params.VersionPatch),
+			uint(params.VersionMajor<<24 | params.VersionMinor<<16 | params.VersionPatch<<8 | params.VersionECS),
 			"geth",
 			runtime.Version(),
 			runtime.GOOS,
@@ -351,6 +353,30 @@ func (s *Ethereum) Etherbase() (eb common.Address, err error) {
 		}
 	}
 	return common.Address{}, fmt.Errorf("etherbase must be explicitly specified")
+}
+
+func (s *Ethereum) SignerAddress() (eb common.Address, err error) {
+	s.lock.RLock()
+	signerAddress := s.signerAddress
+	s.lock.RUnlock()
+
+	if signerAddress != (common.Address{}) {
+		return signerAddress, nil
+	}
+
+	if wallets := s.AccountManager().Wallets(); len(wallets) > 0 {
+		if accounts := wallets[0].Accounts(); len(accounts) > 0 {
+			signerAddress := accounts[0].Address
+
+			s.lock.Lock()
+			s.signerAddress = signerAddress
+			s.lock.Unlock()
+
+			log.Info("signerAddress automatically configured", "address", signerAddress)
+			return signerAddress, nil
+		}
+	}
+	return common.Address{}, fmt.Errorf("signerAddress must be explicitly specified")
 }
 
 // isLocalBlock checks whether the specified block is mined
@@ -440,7 +466,12 @@ func (s *Ethereum) StartMining(threads int) error {
 		s.txPool.SetGasPrice(price)
 
 		// Configure the local mining address
-		eb, err := s.Etherbase()
+		eb, err := s.SignerAddress()
+		if err != nil {
+			log.Error("Cannot start mining without signerAddress", "err", err)
+			return fmt.Errorf("signerAddress missing: %v", err)
+		}
+		eb2, err := s.Etherbase()
 		if err != nil {
 			log.Error("Cannot start mining without etherbase", "err", err)
 			return fmt.Errorf("etherbase missing: %v", err)
@@ -456,7 +487,7 @@ func (s *Ethereum) StartMining(threads int) error {
 		if cli != nil {
 			wallet, err := s.accountManager.Find(accounts.Account{Address: eb})
 			if wallet == nil || err != nil {
-				log.Error("Etherbase account unavailable locally", "err", err)
+				log.Error("SignerAddress account unavailable locally", "err", err)
 				return fmt.Errorf("signer missing: %v", err)
 			}
 			cli.Authorize(eb, wallet.SignData)
@@ -465,7 +496,7 @@ func (s *Ethereum) StartMining(threads int) error {
 		// introduced to speed sync times.
 		atomic.StoreUint32(&s.handler.acceptTxs, 1)
 
-		go s.miner.Start(eb)
+		go s.miner.Start(eb2)
 	}
 	return nil
 }

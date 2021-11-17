@@ -43,6 +43,7 @@ var TrustedCheckpoints = map[common.Hash]*TrustedCheckpoint{
 	SepoliaGenesisHash: SepoliaTrustedCheckpoint,
 	RinkebyGenesisHash: RinkebyTrustedCheckpoint,
 	GoerliGenesisHash:  GoerliTrustedCheckpoint,
+	ECSGenesisHash:     ECSTrustedCheckpoint,
 }
 
 // CheckpointOracles associates each known checkpoint oracles with the genesis hash of
@@ -88,6 +89,120 @@ var (
 		CHTRoot:      common.HexToHash("0xc31e0462ca3d39a46111bb6b63ac4e1cac84089472b7474a319d582f72b3f0c0"),
 		BloomRoot:    common.HexToHash("0x7c9f25ce3577a3ab330d52a7343f801899cf9d4980c69f81de31ccc1a055c809"),
 	}
+
+	ECSChainConfig = &ChainConfig{
+		ChainID:             big.NewInt(63000),
+		HomesteadBlock:      big.NewInt(0),
+		EIP150Block:         big.NewInt(0),
+		EIP155Block:         big.NewInt(0),
+		EIP158Block:         big.NewInt(0),
+		ByzantiumBlock:      big.NewInt(0),
+		ConstantinopleBlock: big.NewInt(0),
+		PetersburgBlock:     big.NewInt(0),
+		IstanbulBlock:       big.NewInt(0),
+		BerlinBlock:         big.NewInt(7387000),
+		LondonBlock:         big.NewInt(10164000),
+		Clique: &CliqueConfig{
+			Period: 5,
+			Epoch:  30000,
+			Pallas: &PallasConfig{
+				Block: big.NewInt(0),
+				Validators: map[uint64][]ValidatorConfig{
+					2820000: {
+						{
+							Address: common.HexToAddress("0x60812650e11eB28d5846b1C62F311c0b9F53bc79"),
+							Super:   false,
+						},
+						{
+							Address: common.HexToAddress("0x269a32c2975DC7FE5293c15e0E5BBee066bA4074"),
+							Super:   false,
+						},
+						{
+							Address: common.HexToAddress("0xa38a591a5c1B076a6D05F8C7944D5C86c922e9a6"),
+							Super:   false,
+						},
+						{
+							Address: common.HexToAddress("0x0Cd0dB0eEDaA7928f5C5f6EEE2234C88d99B4552"),
+							Super:   false,
+						},
+						{
+							Address: common.HexToAddress("0x050c4bea6019E59dB716d3455d4d271B39E95197"),
+							Super:   false,
+						},
+					},
+					2940000: {
+						{
+							Address: common.HexToAddress("0x60812650e11eB28d5846b1C62F311c0b9F53bc79"),
+							Super:   true,
+						},
+						{
+							Address: common.HexToAddress("0x269a32c2975DC7FE5293c15e0E5BBee066bA4074"),
+							Super:   true,
+						},
+						{
+							Address: common.HexToAddress("0xa38a591a5c1B076a6D05F8C7944D5C86c922e9a6"),
+							Super:   true,
+						},
+						{
+							Address: common.HexToAddress("0x0Cd0dB0eEDaA7928f5C5f6EEE2234C88d99B4552"),
+							Super:   true,
+						},
+						{
+							Address: common.HexToAddress("0x050c4bea6019E59dB716d3455d4d271B39E95197"),
+							Super:   true,
+						},
+					},
+				},
+			},
+		},
+	}
+
+	ECSTrustedCheckpoint = &TrustedCheckpoint{
+		SectionIndex: 214,
+		SectionHead:  common.HexToHash("0xbf227376833e12a2981bf3dd253fce0803944c1afadc1d8d0792f165d1941a8e"),
+		CHTRoot:      common.HexToHash("0x9cf47763ceb738c40d2a0462fe45fd21c617e4f38bd66513d5483977254b8ce1"),
+		BloomRoot:    common.HexToHash("0xbce7d73e08403eb36fc051d4eccce9f0006645bd08bf00ad9dcf07122147dffa"),
+	}
+	ECSGenesisHash = common.HexToHash("0x3ad19b6d78592113cc1e95d59f1e23217e4881a2afe62be23db7cd15cc618bf0")
+
+	ECSTestnetChainConfig = &ChainConfig{
+		ChainID:             big.NewInt(63001),
+		HomesteadBlock:      big.NewInt(0),
+		EIP150Block:         big.NewInt(0),
+		EIP155Block:         big.NewInt(0),
+		EIP158Block:         big.NewInt(0),
+		ByzantiumBlock:      big.NewInt(0),
+		ConstantinopleBlock: big.NewInt(0),
+		PetersburgBlock:     big.NewInt(0),
+		IstanbulBlock:       big.NewInt(0),
+		BerlinBlock:         big.NewInt(2700000),
+		LondonBlock:         big.NewInt(6942000),
+		Clique: &CliqueConfig{
+			Period: 5,
+			Epoch:  30000,
+			Pallas: &PallasConfig{
+				Block: big.NewInt(0),
+				Validators: map[uint64][]ValidatorConfig{
+					240000: {
+						{
+							Address: common.HexToAddress("0x70AA6F9dd0f55c357Eb159E617944f78b4BCE16a"),
+							Super:   true,
+						},
+						{
+							Address: common.HexToAddress("0x95a15Ecf63d99A77E6Cde13767b24cd45FcF4976"),
+							Super:   true,
+						},
+						{
+							Address: common.HexToAddress("0x03C9f21Ace15EB5dD9b889C4715C3E49106943e6"),
+							Super:   true,
+						},
+					},
+				},
+			},
+		},
+	}
+
+	ECSTestnetGenesisHash = common.HexToHash("0xe87812172a1f181db4d332047eea543e72db2afa6bde92c9234b92b2610bf2cb")
 
 	// MainnetCheckpointOracle contains a set of configs for the main network oracle.
 	MainnetCheckpointOracle = &CheckpointOracleConfig{
@@ -397,8 +512,21 @@ func (c *EthashConfig) String() string {
 
 // CliqueConfig is the consensus engine configs for proof-of-authority based sealing.
 type CliqueConfig struct {
-	Period uint64 `json:"period"` // Number of seconds between blocks to enforce
-	Epoch  uint64 `json:"epoch"`  // Epoch length to reset votes and checkpoint
+	Period uint64        `json:"period"` // Number of seconds between blocks to enforce
+	Epoch  uint64        `json:"epoch"`  // Epoch length to reset votes and checkpoint
+	Pallas *PallasConfig `json:"pallas"` // Configuration options for pallas-related settings
+}
+
+// ValidatorConfig describes a validator in a pallas config
+type ValidatorConfig struct {
+	Address common.Address `json:"address"` // Address of the validator
+	Super   bool           `json:"super"`   // Wether this validator is a supervalidator
+}
+
+// PallasConfig is the config for pallas-clique
+type PallasConfig struct {
+	Validators map[uint64][]ValidatorConfig `json:"validators"`      // Map of validator overrides
+	Block      *big.Int                     `json:"activationBlock"` // Block at which pallas goes into effect
 }
 
 // String implements the stringer interface, returning the consensus engine details.
@@ -469,6 +597,9 @@ func (c *ChainConfig) String() string {
 	}
 	if c.CancunBlock != nil {
 		banner += fmt.Sprintf(" - Cancun:                      %-8v\n", c.CancunBlock)
+	}
+	if c.Clique != nil && c.Clique.Pallas != nil {
+		banner += fmt.Sprintf(" - Pallas:                      %-8v\n", c.Clique.Pallas.Block)
 	}
 	banner += "\n"
 
@@ -546,6 +677,14 @@ func (c *ChainConfig) IsBerlin(num *big.Int) bool {
 // IsLondon returns whether num is either equal to the London fork block or greater.
 func (c *ChainConfig) IsLondon(num *big.Int) bool {
 	return isForked(c.LondonBlock, num)
+}
+
+// IsPallas returns whether num is either equal to the pallas fork block or greater.
+func (c *ChainConfig) IsPallas(num *big.Int) bool {
+	if c.Clique == nil || c.Clique.Pallas == nil {
+		return false
+	}
+	return isForked(c.Clique.Pallas.Block, num)
 }
 
 // IsArrowGlacier returns whether num is either equal to the Arrow Glacier (EIP-4345) fork block or greater.
@@ -774,6 +913,7 @@ type Rules struct {
 	IsByzantium, IsConstantinople, IsPetersburg, IsIstanbul bool
 	IsBerlin, IsLondon                                      bool
 	IsMerge, IsShanghai, isCancun                           bool
+	IsPallas                                                bool
 }
 
 // Rules ensures c's ChainID is not nil.
@@ -794,6 +934,7 @@ func (c *ChainConfig) Rules(num *big.Int, isMerge bool) Rules {
 		IsIstanbul:       c.IsIstanbul(num),
 		IsBerlin:         c.IsBerlin(num),
 		IsLondon:         c.IsLondon(num),
+		IsPallas:         c.IsPallas(num),
 		IsMerge:          isMerge,
 		IsShanghai:       c.IsShanghai(num),
 		isCancun:         c.IsCancun(num),

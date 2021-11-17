@@ -82,6 +82,16 @@ var KilnBootnodes = []string{
 	"enode://b74bd2e8a9f0c53f0c93bcce80818f2f19439fd807af5c7fbc3efb10130c6ee08be8f3aaec7dc0a057ad7b2a809c8f34dc62431e9b6954b07a6548cc59867884@164.92.140.200:30303",
 }
 
+var ECSBootnodes = []string{
+	"enode://87177ff6d1c1916f41e214a9470d468f2c586a3db42c0d1c0a677d453851f81c81ef7e7a249b0cadcffdac156da77f72926fa2e2120bb9e63eba6938ec3f9958@51.136.105.214:30303",
+	"enode://9d5c5bb07f19ffd6651f0ff4694f3953339f47d48c61918dfc0d19f486c6cbd932de2f45518e448fc353de82e23882ea96e7fcf973cac0ddf70334dac9595e26@20.67.33.110:30303",
+}
+
+var ECSTestnetBootnodes = []string{
+	"enode://1ff33382695f0b58a5362f5a75e9a4a5018c13fc462e29e4e95bd5837230b091b749f243e24ea6f7927d8fc7c100b1eebbdec749d0b8585eb2173c4522a2e156@52.142.228.97:30303",
+	"enode://d2aef34a0d3ff994941f783f10ad43538885b346f37b039d41a32c826a92963b6136ea55e65a936ee88de7f65e3611d28e087e1d5b5688945651668bfef0365c@20.56.68.240:30303",
+}
+
 var V5Bootnodes = []string{
 	// Teku team's bootnode
 	"enr:-KG4QOtcP9X1FbIMOe17QNMKqDxCpm14jcX5tiOE4_TyMrFqbmhPZHK_ZPG2Gxb1GE2xdtodOfx9-cgvNtxnRyHEmC0ghGV0aDKQ9aX9QgAAAAD__________4JpZIJ2NIJpcIQDE8KdiXNlY3AyNTZrMaEDhpehBDbZjM_L9ek699Y7vhUJ-eAdMyQW_Fil522Y0fODdGNwgiMog3VkcIIjKA",
@@ -118,6 +128,10 @@ func KnownDNSNetwork(genesis common.Hash, protocol string) string {
 		net = "goerli"
 	case SepoliaGenesisHash:
 		net = "sepolia"
+	case ECSGenesisHash:
+		return "enrtree://ANIPTHGQCHSQ3KKMLT7KHDOFZWHMQ4DT7MQFZFSVDGO4PGS7QBUB6@main.ecredits.net"
+	case ECSTestnetGenesisHash:
+		return "enrtree://AKHOIYZN4QPRZ24G4TUX237GGW6RHUWRVKLIDFQSM4HQHXQOH27QK@test.ecredits.net"
 	default:
 		return ""
 	}

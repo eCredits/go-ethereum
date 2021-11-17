@@ -63,6 +63,9 @@ var (
 	nonceAuthVote = hexutil.MustDecode("0xffffffffffffffff") // Magic nonce number to vote on adding a new signer
 	nonceDropVote = hexutil.MustDecode("0x0000000000000000") // Magic nonce number to vote on removing a signer.
 
+	nonceAuthVoteSuper = hexutil.MustDecode("0xefffffffffffffff") // Magic nonce number to convert a normal validator to a supervalidator
+	nonceDropVoteSuper = hexutil.MustDecode("0x1000000000000000") // Magic nonce number to convert a supervalidator to a normal validator
+
 	uncleHash = types.CalcUncleHash(nil) // Always Keccak256(RLP([])) as uncles are meaningless outside of PoW.
 
 	diffInTurn = big.NewInt(2) // Block difficulty for in-turn signatures
@@ -176,7 +179,8 @@ type Clique struct {
 	recents    *lru.ARCCache // Snapshots for recent block to speed up reorgs
 	signatures *lru.ARCCache // Signatures of recent blocks to speed up mining
 
-	proposals map[common.Address]bool // Current list of proposals we are pushing
+	proposals      map[common.Address]bool // Current list of proposals we are pushing
+	proposalsSuper map[common.Address]bool
 
 	signer common.Address // Ethereum address of the signing key
 	signFn SignerFn       // Signer function to authorize hashes with
@@ -199,17 +203,21 @@ func New(config *params.CliqueConfig, db ethdb.Database) *Clique {
 	signatures, _ := lru.NewARC(inmemorySignatures)
 
 	return &Clique{
-		config:     &conf,
-		db:         db,
-		recents:    recents,
-		signatures: signatures,
-		proposals:  make(map[common.Address]bool),
+		config:         &conf,
+		db:             db,
+		recents:        recents,
+		signatures:     signatures,
+		proposals:      make(map[common.Address]bool),
+		proposalsSuper: make(map[common.Address]bool),
 	}
 }
 
 // Author implements consensus.Engine, returning the Ethereum address recovered
 // from the signature in the header's extra-data section.
 func (c *Clique) Author(header *types.Header) (common.Address, error) {
+	if header.MixDigest != (common.Hash{}) {
+		return common.HexToAddress(header.MixDigest.Hex()), nil
+	}
 	return ecrecover(header, c.signatures)
 }
 
@@ -259,7 +267,7 @@ func (c *Clique) verifyHeader(chain consensus.ChainHeaderReader, header *types.H
 		return errInvalidCheckpointBeneficiary
 	}
 	// Nonces must be 0x00..0 or 0xff..f, zeroes enforced on checkpoints
-	if !bytes.Equal(header.Nonce[:], nonceAuthVote) && !bytes.Equal(header.Nonce[:], nonceDropVote) {
+	if !bytes.Equal(header.Nonce[:], nonceAuthVote) && !bytes.Equal(header.Nonce[:], nonceDropVote) && !bytes.Equal(header.Nonce[:], nonceAuthVoteSuper) && !bytes.Equal(header.Nonce[:], nonceDropVoteSuper) {
 		return errInvalidVote
 	}
 	if checkpoint && !bytes.Equal(header.Nonce[:], nonceDropVote) {
@@ -279,10 +287,6 @@ func (c *Clique) verifyHeader(chain consensus.ChainHeaderReader, header *types.H
 	}
 	if checkpoint && signersBytes%common.AddressLength != 0 {
 		return errInvalidCheckpointSigners
-	}
-	// Ensure that the mix digest is zero as we don't have fork protection currently
-	if header.MixDigest != (common.Hash{}) {
-		return errInvalidMixDigest
 	}
 	// Ensure that the block doesn't contain any uncles which are meaningless in PoA
 	if header.UncleHash != uncleHash {
@@ -352,9 +356,12 @@ func (c *Clique) verifyCascadingFields(chain consensus.ChainHeaderReader, header
 	}
 	// If the block is a checkpoint block, verify the signer list
 	if number%c.config.Epoch == 0 {
-		signers := make([]byte, len(snap.Signers)*common.AddressLength)
+		signers := make([]byte, (len(snap.Signers)+len(snap.SuperSigners))*common.AddressLength)
 		for i, signer := range snap.signers() {
 			copy(signers[i*common.AddressLength:], signer[:])
+		}
+		for i, signer := range snap.superSigners() {
+			copy(signers[(len(snap.Signers)+i)*common.AddressLength:], signer[:])
 		}
 		extraSuffix := len(header.Extra) - extraSeal
 		if !bytes.Equal(header.Extra[extraVanity:extraSuffix], signers) {
@@ -395,11 +402,25 @@ func (c *Clique) snapshot(chain consensus.ChainHeaderReader, number uint64, hash
 			if checkpoint != nil {
 				hash := checkpoint.Hash()
 
-				signers := make([]common.Address, (len(checkpoint.Extra)-extraVanity-extraSeal)/common.AddressLength)
-				for i := 0; i < len(signers); i++ {
-					copy(signers[i][:], checkpoint.Extra[extraVanity+i*common.AddressLength:])
+				rawSigners := make([]common.Address, (len(checkpoint.Extra)-extraVanity-extraSeal)/common.AddressLength)
+				for i := 0; i < len(rawSigners); i++ {
+					copy(rawSigners[i][:], checkpoint.Extra[extraVanity+i*common.AddressLength:])
 				}
-				snap = newSnapshot(c.config, c.signatures, number, hash, signers)
+
+				var signers []common.Address
+				var superSigners []common.Address
+				seenSigners := make(map[common.Address]struct{})
+
+				for _, signer := range rawSigners {
+					if _, ok := seenSigners[signer]; ok {
+						superSigners = append(superSigners, signer)
+					} else {
+						signers = append(signers, signer)
+						seenSigners[signer] = struct{}{}
+					}
+				}
+
+				snap = newSnapshot(c.config, c.signatures, number, hash, signers, superSigners)
 				if err := snap.store(c.db); err != nil {
 					return nil, err
 				}
@@ -497,6 +518,11 @@ func (c *Clique) verifySeal(snap *Snapshot, header *types.Header, parents []*typ
 // Prepare implements consensus.Engine, preparing all the consensus fields of the
 // header for running the transactions on top.
 func (c *Clique) Prepare(chain consensus.ChainHeaderReader, header *types.Header) error {
+	// if a custom coinbase is set, set the mix digest accordingly
+	// while not strictly necessary if the coinbase is the signer it does not make any significant difference in that case.
+	if header.Coinbase != (common.Address{}) {
+		header.MixDigest = header.Coinbase.Hash()
+	}
 	// If the block isn't a checkpoint, cast a random vote (good enough for now)
 	header.Coinbase = common.Address{}
 	header.Nonce = types.BlockNonce{}
@@ -510,19 +536,35 @@ func (c *Clique) Prepare(chain consensus.ChainHeaderReader, header *types.Header
 	c.lock.RLock()
 	if number%c.config.Epoch != 0 {
 		// Gather all the proposals that make sense voting on
-		addresses := make([]common.Address, 0, len(c.proposals))
+		addresses := make([]common.Address, 0, len(c.proposals)+len(c.proposalsSuper))
 		for address, authorize := range c.proposals {
 			if snap.validVote(address, authorize) {
 				addresses = append(addresses, address)
 			}
 		}
+
+		for address, authorize := range c.proposalsSuper {
+			if snap.validVoteSuper(address, authorize) {
+				addresses = append(addresses, address)
+			}
+		}
+
 		// If there's pending proposals, cast a vote on them
 		if len(addresses) > 0 {
-			header.Coinbase = addresses[rand.Intn(len(addresses))]
-			if c.proposals[header.Coinbase] {
-				copy(header.Nonce[:], nonceAuthVote)
+			index := rand.Intn(len(addresses))
+			header.Coinbase = addresses[index]
+			if index < len(c.proposals) {
+				if c.proposals[header.Coinbase] {
+					copy(header.Nonce[:], nonceAuthVote)
+				} else {
+					copy(header.Nonce[:], nonceDropVote)
+				}
 			} else {
-				copy(header.Nonce[:], nonceDropVote)
+				if c.proposalsSuper[header.Coinbase] {
+					copy(header.Nonce[:], nonceAuthVoteSuper)
+				} else {
+					copy(header.Nonce[:], nonceDropVoteSuper)
+				}
 			}
 		}
 	}
@@ -544,11 +586,11 @@ func (c *Clique) Prepare(chain consensus.ChainHeaderReader, header *types.Header
 		for _, signer := range snap.signers() {
 			header.Extra = append(header.Extra, signer[:]...)
 		}
+		for _, signer := range snap.superSigners() {
+			header.Extra = append(header.Extra, signer[:]...)
+		}
 	}
 	header.Extra = append(header.Extra, make([]byte, extraSeal)...)
-
-	// Mix digest is reserved for now, set to empty
-	header.MixDigest = common.Hash{}
 
 	// Ensure the timestamp has the correct delay
 	parent := chain.GetHeader(header.ParentHash, number-1)
@@ -629,11 +671,14 @@ func (c *Clique) Seal(chain consensus.ChainHeaderReader, block *types.Block, res
 	// Sweet, the protocol permits us to sign the block, wait for our time
 	delay := time.Unix(int64(header.Time), 0).Sub(time.Now()) // nolint: gosimple
 	if header.Difficulty.Cmp(diffNoTurn) == 0 {
-		// It's not our turn explicitly to sign, delay it a bit
 		wiggle := time.Duration(len(snap.Signers)/2+1) * wiggleTime
-		delay += time.Duration(rand.Int63n(int64(wiggle)))
 
-		log.Trace("Out-of-turn signing requested", "wiggle", common.PrettyDuration(wiggle))
+		dc, wc := snap.computeDelay(signer, number)
+		delay += time.Duration(dc*chain.Config().Clique.Period) * time.Second / 2
+		if wc {
+			delay += time.Duration(rand.Int63n(int64(wiggle)))
+		}
+		log.Trace("Out-of-turn signing requested", "delay", delay)
 	}
 	// Sign all the things!
 	sighash, err := signFn(accounts.Account{Address: signer}, accounts.MimetypeClique, CliqueRLP(header))

@@ -44,6 +44,8 @@ type Vote struct {
 type Tally struct {
 	Authorize bool `json:"authorize"` // Whether the vote is about authorizing or kicking someone
 	Votes     int  `json:"votes"`     // Number of votes until now wanting to pass the proposal
+
+	SuperVotes int `json:"superVotes"` // Number of supervotes now wanting to pass the proposal
 }
 
 // Snapshot is the state of the authorization voting at a given point in time.
@@ -57,6 +59,10 @@ type Snapshot struct {
 	Recents map[uint64]common.Address   `json:"recents"` // Set of recent signers for spam protections
 	Votes   []*Vote                     `json:"votes"`   // List of votes cast in chronological order
 	Tally   map[common.Address]Tally    `json:"tally"`   // Current vote tally to avoid recalculating
+
+	SuperSigners map[common.Address]struct{}   `json:"superSigners"` // Set of supersigners at this moment
+	SuperTally   map[common.Address]SuperTally `json:"superTally"`   // Current vote tally to avoid recalculating
+	SuperVotes   []*Vote                       `json:"superVotes"`   // List of votes cast in chronological order
 }
 
 // signersAscending implements the sort interface to allow sorting a list of addresses
@@ -69,18 +75,23 @@ func (s signersAscending) Swap(i, j int)      { s[i], s[j] = s[j], s[i] }
 // newSnapshot creates a new snapshot with the specified startup parameters. This
 // method does not initialize the set of recent signers, so only ever use if for
 // the genesis block.
-func newSnapshot(config *params.CliqueConfig, sigcache *lru.ARCCache, number uint64, hash common.Hash, signers []common.Address) *Snapshot {
+func newSnapshot(config *params.CliqueConfig, sigcache *lru.ARCCache, number uint64, hash common.Hash, signers []common.Address, supersSigners []common.Address) *Snapshot {
 	snap := &Snapshot{
-		config:   config,
-		sigcache: sigcache,
-		Number:   number,
-		Hash:     hash,
-		Signers:  make(map[common.Address]struct{}),
-		Recents:  make(map[uint64]common.Address),
-		Tally:    make(map[common.Address]Tally),
+		config:       config,
+		sigcache:     sigcache,
+		Number:       number,
+		Hash:         hash,
+		Signers:      make(map[common.Address]struct{}),
+		Recents:      make(map[uint64]common.Address),
+		Tally:        make(map[common.Address]Tally),
+		SuperSigners: make(map[common.Address]struct{}),
+		SuperTally:   make(map[common.Address]SuperTally),
 	}
 	for _, signer := range signers {
 		snap.Signers[signer] = struct{}{}
+	}
+	for _, signer := range supersSigners {
+		snap.SuperSigners[signer] = struct{}{}
 	}
 	return snap
 }
@@ -113,17 +124,23 @@ func (s *Snapshot) store(db ethdb.Database) error {
 // copy creates a deep copy of the snapshot, though not the individual votes.
 func (s *Snapshot) copy() *Snapshot {
 	cpy := &Snapshot{
-		config:   s.config,
-		sigcache: s.sigcache,
-		Number:   s.Number,
-		Hash:     s.Hash,
-		Signers:  make(map[common.Address]struct{}),
-		Recents:  make(map[uint64]common.Address),
-		Votes:    make([]*Vote, len(s.Votes)),
-		Tally:    make(map[common.Address]Tally),
+		config:       s.config,
+		sigcache:     s.sigcache,
+		Number:       s.Number,
+		Hash:         s.Hash,
+		Signers:      make(map[common.Address]struct{}),
+		Recents:      make(map[uint64]common.Address),
+		Votes:        make([]*Vote, len(s.Votes)),
+		Tally:        make(map[common.Address]Tally),
+		SuperSigners: make(map[common.Address]struct{}),
+		SuperTally:   make(map[common.Address]SuperTally),
+		SuperVotes:   make([]*Vote, len(s.SuperVotes)),
 	}
 	for signer := range s.Signers {
 		cpy.Signers[signer] = struct{}{}
+	}
+	for signer := range s.SuperSigners {
+		cpy.SuperSigners[signer] = struct{}{}
 	}
 	for block, signer := range s.Recents {
 		cpy.Recents[block] = signer
@@ -132,6 +149,11 @@ func (s *Snapshot) copy() *Snapshot {
 		cpy.Tally[address] = tally
 	}
 	copy(cpy.Votes, s.Votes)
+
+	for address, tally := range s.SuperTally {
+		cpy.SuperTally[address] = tally
+	}
+	copy(cpy.SuperVotes, s.SuperVotes)
 
 	return cpy
 }
@@ -144,7 +166,7 @@ func (s *Snapshot) validVote(address common.Address, authorize bool) bool {
 }
 
 // cast adds a new vote into the tally.
-func (s *Snapshot) cast(address common.Address, authorize bool) bool {
+func (s *Snapshot) cast(address common.Address, authorize bool, super bool) bool {
 	// Ensure the vote is meaningful
 	if !s.validVote(address, authorize) {
 		return false
@@ -152,15 +174,22 @@ func (s *Snapshot) cast(address common.Address, authorize bool) bool {
 	// Cast the vote into an existing or new tally
 	if old, ok := s.Tally[address]; ok {
 		old.Votes++
+		if super {
+			old.SuperVotes++
+		}
 		s.Tally[address] = old
 	} else {
-		s.Tally[address] = Tally{Authorize: authorize, Votes: 1}
+		new := Tally{Authorize: authorize, Votes: 1}
+		if super {
+			new.SuperVotes++
+		}
+		s.Tally[address] = new
 	}
 	return true
 }
 
 // uncast removes a previously cast vote from the tally.
-func (s *Snapshot) uncast(address common.Address, authorize bool) bool {
+func (s *Snapshot) uncast(address common.Address, authorize bool, super bool) bool {
 	// If there's no tally, it's a dangling vote, just drop
 	tally, ok := s.Tally[address]
 	if !ok {
@@ -173,11 +202,24 @@ func (s *Snapshot) uncast(address common.Address, authorize bool) bool {
 	// Otherwise revert the vote
 	if tally.Votes > 1 {
 		tally.Votes--
+		if super {
+			tally.SuperVotes--
+		}
 		s.Tally[address] = tally
 	} else {
 		delete(s.Tally, address)
 	}
 	return true
+}
+
+func (s *Snapshot) hasPassed(tally *Tally, blockNumber uint64) bool {
+	if tally.Votes > len(s.Signers)/2 {
+		return true
+	}
+	if s.isPallasActive(blockNumber) && tally.SuperVotes > len(s.SuperSigners)*3/4 {
+		return true
+	}
+	return false
 }
 
 // apply creates a new authorization snapshot by applying the given headers to
@@ -208,7 +250,9 @@ func (s *Snapshot) apply(headers []*types.Header) (*Snapshot, error) {
 		number := header.Number.Uint64()
 		if number%s.config.Epoch == 0 {
 			snap.Votes = nil
+			snap.SuperVotes = nil
 			snap.Tally = make(map[common.Address]Tally)
+			snap.SuperTally = make(map[common.Address]SuperTally)
 		}
 		// Delete the oldest signer from the recent list to allow it signing again
 		if limit := uint64(len(snap.Signers)/2 + 1); number >= limit {
@@ -229,68 +273,156 @@ func (s *Snapshot) apply(headers []*types.Header) (*Snapshot, error) {
 		}
 		snap.Recents[number] = signer
 
-		// Header authorized, discard any previous votes from the signer
-		for i, vote := range snap.Votes {
-			if vote.Signer == signer && vote.Address == header.Coinbase {
-				// Uncast the vote from the cached tally
-				snap.uncast(vote.Address, vote.Authorize)
-
-				// Uncast the vote from the chronological list
-				snap.Votes = append(snap.Votes[:i], snap.Votes[i+1:]...)
-				break // only one vote allowed
-			}
-		}
 		// Tally up the new vote from the signer
 		var authorize bool
+		var superVote bool
 		switch {
 		case bytes.Equal(header.Nonce[:], nonceAuthVote):
 			authorize = true
+			superVote = false
 		case bytes.Equal(header.Nonce[:], nonceDropVote):
 			authorize = false
+			superVote = false
+		case bytes.Equal(header.Nonce[:], nonceAuthVoteSuper):
+			authorize = true
+			superVote = true
+		case bytes.Equal(header.Nonce[:], nonceDropVoteSuper):
+			authorize = false
+			superVote = true
 		default:
 			return nil, errInvalidVote
 		}
-		if snap.cast(header.Coinbase, authorize) {
-			snap.Votes = append(snap.Votes, &Vote{
-				Signer:    signer,
-				Block:     number,
-				Address:   header.Coinbase,
-				Authorize: authorize,
-			})
-		}
-		// If the vote passed, update the list of signers
-		if tally := snap.Tally[header.Coinbase]; tally.Votes > len(snap.Signers)/2 {
-			if tally.Authorize {
-				snap.Signers[header.Coinbase] = struct{}{}
-			} else {
-				delete(snap.Signers, header.Coinbase)
 
-				// Signer list shrunk, delete any leftover recent caches
-				if limit := uint64(len(snap.Signers)/2 + 1); number >= limit {
-					delete(snap.Recents, number-limit)
+		if !superVote {
+			// Header authorized, discard any previous votes from the signer
+			for i, vote := range snap.Votes {
+				if vote.Signer == signer && vote.Address == header.Coinbase {
+					// Uncast the vote from the cached tally
+					snap.uncast(vote.Address, vote.Authorize, s.isSuper(signer))
+
+					// Uncast the vote from the chronological list
+					snap.Votes = append(snap.Votes[:i], snap.Votes[i+1:]...)
+					break // only one vote allowed
 				}
-				// Discard any previous votes the deauthorized signer cast
+			}
+
+			if snap.cast(header.Coinbase, authorize, s.isSuper(signer)) {
+				snap.Votes = append(snap.Votes, &Vote{
+					Signer:    signer,
+					Block:     number,
+					Address:   header.Coinbase,
+					Authorize: authorize,
+				})
+			}
+			// If the vote passed, update the list of signers
+			if tally := snap.Tally[header.Coinbase]; s.hasPassed(&tally, number) {
+				if snap.isSuper(header.Coinbase) {
+					// don't vote on supers
+				} else if tally.Authorize {
+					snap.Signers[header.Coinbase] = struct{}{}
+				} else {
+					delete(snap.Signers, header.Coinbase)
+
+					// Signer list shrunk, delete any leftover recent caches
+					if limit := uint64(len(snap.Signers)/2 + 1); number >= limit {
+						delete(snap.Recents, number-limit)
+					}
+					// Discard any previous votes the deauthorized signer cast
+					for i := 0; i < len(snap.Votes); i++ {
+						if snap.Votes[i].Signer == header.Coinbase {
+							// Uncast the vote from the cached tally
+							snap.uncast(snap.Votes[i].Address, snap.Votes[i].Authorize, snap.isSuper(header.Coinbase))
+
+							// Uncast the vote from the chronological list
+							snap.Votes = append(snap.Votes[:i], snap.Votes[i+1:]...)
+
+							i--
+						}
+					}
+
+					// also reset super validator voting if there was any
+					for i := 0; i < len(snap.SuperVotes); i++ {
+						if snap.SuperVotes[i].Address == header.Coinbase {
+							snap.SuperVotes = append(snap.SuperVotes[:i], snap.SuperVotes[i+1:]...)
+							i--
+						}
+					}
+					delete(snap.SuperTally, header.Coinbase)
+				}
+				// Discard any previous votes around the just changed account
 				for i := 0; i < len(snap.Votes); i++ {
-					if snap.Votes[i].Signer == header.Coinbase {
-						// Uncast the vote from the cached tally
-						snap.uncast(snap.Votes[i].Address, snap.Votes[i].Authorize)
-
-						// Uncast the vote from the chronological list
+					if snap.Votes[i].Address == header.Coinbase {
 						snap.Votes = append(snap.Votes[:i], snap.Votes[i+1:]...)
-
 						i--
 					}
 				}
+				delete(snap.Tally, header.Coinbase)
 			}
-			// Discard any previous votes around the just changed account
-			for i := 0; i < len(snap.Votes); i++ {
-				if snap.Votes[i].Address == header.Coinbase {
-					snap.Votes = append(snap.Votes[:i], snap.Votes[i+1:]...)
-					i--
+		} else {
+			for i, vote := range snap.SuperVotes {
+				if vote.Signer == signer && vote.Address == header.Coinbase {
+					// Uncast the vote from the cached tally
+					snap.uncastSuper(vote.Address, vote.Authorize)
+
+					// Uncast the vote from the chronological list
+					snap.SuperVotes = append(snap.SuperVotes[:i], snap.SuperVotes[i+1:]...)
+					break // only one vote allowed
 				}
 			}
-			delete(snap.Tally, header.Coinbase)
+
+			if snap.castSuper(header.Coinbase, authorize) {
+				snap.SuperVotes = append(snap.Votes, &Vote{
+					Signer:    signer,
+					Block:     number,
+					Address:   header.Coinbase,
+					Authorize: authorize,
+				})
+			}
+			// If the vote passed, update the list of signers
+			if tally := snap.SuperTally[header.Coinbase]; s.hasPassedSuper(&tally, number) {
+				if tally.Authorize {
+					snap.SuperSigners[header.Coinbase] = struct{}{}
+				} else {
+					delete(snap.SuperSigners, header.Coinbase)
+
+					// Discard any previous votes the deauthorized signer cast
+					for i := 0; i < len(snap.SuperVotes); i++ {
+						if snap.SuperVotes[i].Signer == header.Coinbase {
+							// Uncast the vote from the cached tally
+							snap.uncastSuper(snap.SuperVotes[i].Address, snap.SuperVotes[i].Authorize)
+
+							// Uncast the vote from the chronological list
+							snap.SuperVotes = append(snap.SuperVotes[:i], snap.SuperVotes[i+1:]...)
+
+							i--
+						}
+					}
+
+					for i := 0; i < len(snap.Votes); i++ {
+						if snap.Votes[i].Signer == header.Coinbase {
+							// Uncast the vote from the cached tally
+							snap.uncast(snap.Votes[i].Address, snap.Votes[i].Authorize, true)
+
+							// Uncast the vote from the chronological list
+							snap.Votes = append(snap.Votes[:i], snap.Votes[i+1:]...)
+
+							i--
+						}
+					}
+				}
+				// Discard any previous votes around the just changed account
+				for i := 0; i < len(snap.SuperVotes); i++ {
+					if snap.SuperVotes[i].Address == header.Coinbase {
+						snap.SuperVotes = append(snap.SuperVotes[:i], snap.SuperVotes[i+1:]...)
+						i--
+					}
+				}
+				delete(snap.SuperTally, header.Coinbase)
+			}
 		}
+
+		snap.applyPallasOverride(header)
+
 		// If we're taking too much time (ecrecover), notify the user once a while
 		if time.Since(logged) > 8*time.Second {
 			log.Info("Reconstructing voting history", "processed", i, "total", len(headers), "elapsed", common.PrettyDuration(time.Since(start)))

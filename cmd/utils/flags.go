@@ -128,6 +128,16 @@ var (
 		Usage:    "Ethereum mainnet",
 		Category: flags.EthCategory,
 	}
+	ECSFlag = &cli.BoolFlag{
+		Name:     "ecs",
+		Usage:    "ECS mainnet",
+		Category: flags.EthCategory,
+	}
+	ECSTestnetFlag = &cli.BoolFlag{
+		Name:     "ecs-testnet",
+		Usage:    "ECS testnet",
+		Category: flags.EthCategory,
+	}
 	RopstenFlag = &cli.BoolFlag{
 		Name:     "ropsten",
 		Usage:    "Ropsten network: pre-configured proof-of-stake test network",
@@ -542,6 +552,12 @@ var (
 	MinerEtherbaseFlag = &cli.StringFlag{
 		Name:     "miner.etherbase",
 		Usage:    "Public address for block mining rewards (default = first account)",
+		Value:    "0",
+		Category: flags.MinerCategory,
+	}
+	MinerSignerFlag = &cli.StringFlag{
+		Name:     "miner.signer",
+		Usage:    "Address for clique signing (default = first account)",
 		Value:    "0",
 		Category: flags.MinerCategory,
 	}
@@ -987,10 +1003,12 @@ var (
 		GoerliFlag,
 		SepoliaFlag,
 		KilnFlag,
+		ECSTestnetFlag,
 	}
 	// NetworkFlags is the flag group of all built-in supported networks.
 	NetworkFlags = append([]cli.Flag{
 		MainnetFlag,
+		ECSFlag,
 	}, TestnetFlags...)
 
 	// DatabasePathFlags is the flag group of all database path flags.
@@ -1065,7 +1083,7 @@ func setNodeUserIdent(ctx *cli.Context, cfg *node.Config) {
 // setBootstrapNodes creates a list of bootstrap nodes from the command line
 // flags, reverting to pre-configured ones if none have been specified.
 func setBootstrapNodes(ctx *cli.Context, cfg *p2p.Config) {
-	urls := params.MainnetBootnodes
+	urls := params.ECSBootnodes
 	switch {
 	case ctx.IsSet(BootnodesFlag.Name):
 		urls = SplitAndTrim(ctx.String(BootnodesFlag.Name))
@@ -1075,6 +1093,10 @@ func setBootstrapNodes(ctx *cli.Context, cfg *p2p.Config) {
 		urls = params.SepoliaBootnodes
 	case ctx.Bool(RinkebyFlag.Name):
 		urls = params.RinkebyBootnodes
+	case ctx.Bool(ECSFlag.Name):
+		urls = params.ECSBootnodes
+	case ctx.Bool(ECSTestnetFlag.Name):
+		urls = params.ECSTestnetBootnodes
 	case ctx.Bool(GoerliFlag.Name):
 		urls = params.GoerliBootnodes
 	case ctx.Bool(KilnFlag.Name):
@@ -1357,6 +1379,26 @@ func setEtherbase(ctx *cli.Context, ks *keystore.KeyStore, cfg *ethconfig.Config
 			cfg.Miner.Etherbase = account.Address
 		} else {
 			Fatalf("No etherbase configured")
+		}
+	}
+}
+
+func setSigner(ctx *cli.Context, ks *keystore.KeyStore, cfg *ethconfig.Config) {
+	// Extract the current etherbase
+	var signerAddress string
+	if ctx.IsSet(MinerSignerFlag.Name) {
+		signerAddress = ctx.String(MinerSignerFlag.Name)
+	}
+	// Convert the etherbase into an address and configure it
+	if signerAddress != "" {
+		if ks != nil {
+			account, err := MakeAddress(ks, signerAddress)
+			if err != nil {
+				Fatalf("Invalid sigener: %v", err)
+			}
+			cfg.Miner.SignerAddress = account.Address
+		} else {
+			Fatalf("No signer configured")
 		}
 	}
 }
@@ -1727,7 +1769,7 @@ func CheckExclusive(ctx *cli.Context, args ...interface{}) {
 // SetEthConfig applies eth-related command line flags to the config.
 func SetEthConfig(ctx *cli.Context, stack *node.Node, cfg *ethconfig.Config) {
 	// Avoid conflicting network flags
-	CheckExclusive(ctx, MainnetFlag, DeveloperFlag, RopstenFlag, RinkebyFlag, GoerliFlag, SepoliaFlag, KilnFlag)
+	CheckExclusive(ctx, MainnetFlag, ECSFlag, ECSTestnetFlag, DeveloperFlag, RopstenFlag, RinkebyFlag, GoerliFlag, SepoliaFlag, KilnFlag)
 	CheckExclusive(ctx, LightServeFlag, SyncModeFlag, "light")
 	CheckExclusive(ctx, DeveloperFlag, ExternalSignerFlag) // Can't use both ephemeral unlocked and external signer
 	if ctx.String(GCModeFlag.Name) == "archive" && ctx.Uint64(TxLookupLimitFlag.Name) != 0 {
@@ -1742,6 +1784,7 @@ func SetEthConfig(ctx *cli.Context, stack *node.Node, cfg *ethconfig.Config) {
 		ks = keystores[0].(*keystore.KeyStore)
 	}
 	setEtherbase(ctx, ks, cfg)
+	setSigner(ctx, ks, cfg)
 	setGPO(ctx, &cfg.GPO, ctx.String(SyncModeFlag.Name) == "light")
 	setTxPool(ctx, &cfg.TxPool)
 	setEthash(ctx, cfg)
@@ -1868,6 +1911,18 @@ func SetEthConfig(ctx *cli.Context, stack *node.Node, cfg *ethconfig.Config) {
 		}
 		cfg.Genesis = core.DefaultGenesisBlock()
 		SetDNSDiscoveryDefaults(cfg, params.MainnetGenesisHash)
+	case ctx.Bool(ECSFlag.Name):
+		if !ctx.IsSet(NetworkIdFlag.Name) {
+			cfg.NetworkId = 63000
+		}
+		cfg.Genesis = core.DefaultECSGenesisBlock()
+		SetDNSDiscoveryDefaults(cfg, params.ECSGenesisHash)
+	case ctx.Bool(ECSTestnetFlag.Name):
+		if !ctx.IsSet(NetworkIdFlag.Name) {
+			cfg.NetworkId = 63001
+		}
+		cfg.Genesis = core.DefaultECSTestnetGenesisBlock()
+		SetDNSDiscoveryDefaults(cfg, params.ECSTestnetGenesisHash)
 	case ctx.Bool(RopstenFlag.Name):
 		if !ctx.IsSet(NetworkIdFlag.Name) {
 			cfg.NetworkId = 3
@@ -1964,6 +2019,8 @@ func SetEthConfig(ctx *cli.Context, stack *node.Node, cfg *ethconfig.Config) {
 	default:
 		if cfg.NetworkId == 1 {
 			SetDNSDiscoveryDefaults(cfg, params.MainnetGenesisHash)
+		} else if cfg.NetworkId == 63000 {
+			SetDNSDiscoveryDefaults(cfg, params.ECSGenesisHash)
 		}
 	}
 }
@@ -2149,6 +2206,10 @@ func MakeGenesis(ctx *cli.Context) *core.Genesis {
 	switch {
 	case ctx.Bool(MainnetFlag.Name):
 		genesis = core.DefaultGenesisBlock()
+	case ctx.Bool(ECSFlag.Name):
+		genesis = core.DefaultECSGenesisBlock()
+	case ctx.Bool(ECSTestnetFlag.Name):
+		genesis = core.DefaultECSTestnetGenesisBlock()
 	case ctx.Bool(RopstenFlag.Name):
 		genesis = core.DefaultRopstenGenesisBlock()
 	case ctx.Bool(SepoliaFlag.Name):

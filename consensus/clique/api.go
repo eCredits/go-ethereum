@@ -114,6 +114,13 @@ func (api *API) Propose(address common.Address, auth bool) {
 	api.clique.proposals[address] = auth
 }
 
+func (api *API) ProposeSuper(address common.Address, auth bool) {
+	api.clique.lock.Lock()
+	defer api.clique.lock.Unlock()
+
+	api.clique.proposalsSuper[address] = auth
+}
+
 // Discard drops a currently running proposal, stopping the signer from casting
 // further votes (either for or against).
 func (api *API) Discard(address common.Address) {
@@ -221,15 +228,15 @@ func (api *API) GetSigner(rlpOrBlockNr *blockNumberOrHashOrRLP) (common.Address,
 		if header == nil {
 			return common.Address{}, fmt.Errorf("missing block %v", blockNrOrHash.String())
 		}
-		return api.clique.Author(header)
+		return ecrecover(header, api.clique.signatures)
 	}
 	block := new(types.Block)
 	if err := rlp.DecodeBytes(rlpOrBlockNr.RLP, block); err == nil {
-		return api.clique.Author(block.Header())
+		return ecrecover(block.Header(), api.clique.signatures)
 	}
 	header := new(types.Header)
 	if err := rlp.DecodeBytes(rlpOrBlockNr.RLP, header); err != nil {
 		return common.Address{}, err
 	}
-	return api.clique.Author(header)
+	return ecrecover(header, api.clique.signatures)
 }
