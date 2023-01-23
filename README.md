@@ -1,6 +1,6 @@
-## e-Credits Go Ethereum
+## eCredits Go Ethereum
 
-e-Credits modifications of the official Golang implementation of the Ethereum protocol.
+eCredits modifications of the official Golang implementation of the Ethereum protocol.
 
 ## Changes
 
